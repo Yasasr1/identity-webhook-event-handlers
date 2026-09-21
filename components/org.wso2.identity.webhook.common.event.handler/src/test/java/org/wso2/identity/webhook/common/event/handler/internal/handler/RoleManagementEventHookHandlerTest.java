@@ -29,8 +29,6 @@ import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.wso2.carbon.base.CarbonBaseConstants;
 import org.wso2.carbon.identity.core.context.IdentityContext;
-import org.wso2.carbon.identity.core.context.model.Organization;
-import org.wso2.carbon.identity.core.context.model.RootOrganization;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.bean.IdentityEventMessageContext;
@@ -82,6 +80,7 @@ public class RoleManagementEventHookHandlerTest {
     private static final String ROLE_CREATED_EVENT_URI =
             "https://schemas.identity.wso2.org/events/role/event-type/roleCreated";
     private static final String CARBON_SUPER = "carbon.super";
+    private static final String SUB_ORG_TENANT = "sub-org-tenant";
 
     @Mock
     private EventPublisherService mockedEventPublisherService;
@@ -148,16 +147,8 @@ public class RoleManagementEventHookHandlerTest {
         Event event = new Event(eventName);
         IdentityEventMessageContext messageContext = new IdentityEventMessageContext(event);
 
-        try (MockedStatic<IdentityContext> identityContextMock = mockStatic(IdentityContext.class);
-             MockedStatic<OrganizationManagementUtil> orgUtilMock = mockStatic(OrganizationManagementUtil.class)) {
-            IdentityContext rootOrgCtx = mock(IdentityContext.class);
-            when(rootOrgCtx.getTenantDomain()).thenReturn(CARBON_SUPER);
-            identityContextMock.when(IdentityContext::getThreadLocalIdentityContext).thenReturn(rootOrgCtx);
-            orgUtilMock.when(() -> OrganizationManagementUtil.isOrganization(CARBON_SUPER)).thenReturn(false);
-
-            assertTrue(roleManagementEventHookHandler.canHandle(messageContext),
-                    "Handler should be able to handle event: " + eventName);
-        }
+        assertTrue(roleManagementEventHookHandler.canHandle(messageContext),
+                "Handler should be able to handle event: " + eventName);
     }
 
     @DataProvider(name = "unsupportedEventsDataProvider")
@@ -235,55 +226,46 @@ public class RoleManagementEventHookHandlerTest {
         }
     }
 
-    @Test
-    public void testCanHandleReturnsFalseForSubOrgContext() throws Exception {
+    @Test(dataProvider = "unsupportedEventsDataProvider")
+    public void testCannotHandleUnsupportedEventsInSubOrganizationContext(String eventName) {
 
-        Event event = new Event(IdentityEventConstants.Event.POST_ADD_ROLE_V2_EVENT);
+        Event event = new Event(eventName);
         IdentityEventMessageContext messageContext = new IdentityEventMessageContext(event);
 
         try (MockedStatic<IdentityContext> identityContextMock = mockStatic(IdentityContext.class);
              MockedStatic<OrganizationManagementUtil> orgUtilMock = mockStatic(OrganizationManagementUtil.class)) {
             IdentityContext subOrgCtx = mock(IdentityContext.class);
-            when(subOrgCtx.getTenantDomain()).thenReturn("sub-org-tenant");
+            when(subOrgCtx.getTenantDomain()).thenReturn(SUB_ORG_TENANT);
             identityContextMock.when(IdentityContext::getThreadLocalIdentityContext).thenReturn(subOrgCtx);
-            orgUtilMock.when(() -> OrganizationManagementUtil.isOrganization("sub-org-tenant")).thenReturn(true);
+            orgUtilMock.when(() -> OrganizationManagementUtil.isOrganization(SUB_ORG_TENANT)).thenReturn(true);
 
             assertFalse(roleManagementEventHookHandler.canHandle(messageContext),
-                    "canHandle should return false when execution context is a sub-organization.");
+                    "Event type gating should still apply in a sub-organization context: " + eventName);
         }
-
-        try (MockedStatic<IdentityContext> identityContextMock = mockStatic(IdentityContext.class);
-             MockedStatic<OrganizationManagementUtil> orgUtilMock = mockStatic(OrganizationManagementUtil.class)) {
-            IdentityContext rootOrgCtx = mock(IdentityContext.class);
-            when(rootOrgCtx.getTenantDomain()).thenReturn(CARBON_SUPER);
-            identityContextMock.when(IdentityContext::getThreadLocalIdentityContext).thenReturn(rootOrgCtx);
-            orgUtilMock.when(() -> OrganizationManagementUtil.isOrganization(CARBON_SUPER)).thenReturn(false);
-
-            assertTrue(roleManagementEventHookHandler.canHandle(messageContext),
-                    "canHandle should return true for a supported event in root-org context.");
-        }
-
-        // handleEvent path never ran, so no publish interaction expected.
-        verify(mockedEventPublisherService, Mockito.never()).publish(any(), any());
     }
 
     @Test
-    public void testCanHandleReturnsFalseWhenNoIdentityContext() {
+    public void testCanHandleDoesNotDependOnIdentityContext() {
 
         Event event = new Event(IdentityEventConstants.Event.POST_ADD_ROLE_V2_EVENT);
         IdentityEventMessageContext messageContext = new IdentityEventMessageContext(event);
 
-        try (MockedStatic<IdentityContext> identityContextMock = mockStatic(IdentityContext.class);
-             MockedStatic<OrganizationManagementUtil> orgUtilMock = mockStatic(OrganizationManagementUtil.class)) {
-            IdentityContext emptyCtx = mock(IdentityContext.class);
-            when(emptyCtx.getTenantDomain()).thenReturn("sub-org-tenant");
-            identityContextMock.when(IdentityContext::getThreadLocalIdentityContext).thenReturn(emptyCtx);
-            orgUtilMock.when(() -> OrganizationManagementUtil.isOrganization("sub-org-tenant")).thenReturn(true);
+        try (MockedStatic<IdentityContext> identityContextMock = mockStatic(IdentityContext.class)) {
+            identityContextMock.when(IdentityContext::getThreadLocalIdentityContext).thenReturn(null);
 
-            assertFalse(roleManagementEventHookHandler.canHandle(messageContext),
-                    "canHandle should return false when IdentityContext has no RootOrganization " +
+            assertTrue(roleManagementEventHookHandler.canHandle(messageContext),
+                    "canHandle should return true even when no IdentityContext is available " +
                             "(async worker thread with no context propagation).");
+            identityContextMock.verifyNoInteractions();
         }
+    }
+
+    @Test
+    public void testCanHandleReturnsFalseWhenEventNameIsNull() {
+
+        IdentityEventMessageContext messageContext = new IdentityEventMessageContext(new Event(null));
+        assertFalse(roleManagementEventHookHandler.canHandle(messageContext),
+                "canHandle should return false when the event name is null.");
     }
 
     @Test

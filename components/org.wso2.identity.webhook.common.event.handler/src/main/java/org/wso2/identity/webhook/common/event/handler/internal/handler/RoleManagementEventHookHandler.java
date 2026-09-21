@@ -18,14 +18,10 @@
 
 package org.wso2.identity.webhook.common.event.handler.internal.handler;
 
-import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.base.IdentityRuntimeException;
 import org.wso2.carbon.identity.core.bean.context.MessageContext;
-import org.wso2.carbon.identity.core.context.IdentityContext;
-import org.wso2.carbon.identity.core.context.model.Organization;
-import org.wso2.carbon.identity.core.context.model.RootOrganization;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.bean.IdentityEventMessageContext;
@@ -35,8 +31,6 @@ import org.wso2.carbon.identity.event.publisher.api.exception.EventPublisherExce
 import org.wso2.carbon.identity.event.publisher.api.model.EventContext;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayload;
-import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
-import org.wso2.carbon.identity.organization.management.service.util.OrganizationManagementUtil;
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
 import org.wso2.identity.webhook.common.event.handler.api.builder.RoleManagementEventPayloadBuilder;
@@ -80,7 +74,7 @@ public class RoleManagementEventHookHandler extends AbstractEventHandler {
                 LOG.debug("Event name is null in IdentityEventMessageContext. Cannot handle the event.");
                 return false;
             }
-            boolean canHandle = isSupportedEvent(eventName) && !isAccessingSubOrganization();
+            boolean canHandle = isSupportedEvent(eventName);
             if (LOG.isDebugEnabled()) {
                 LOG.debug(eventName + (canHandle ? " event can be handled." : " event cannot be handled."));
             }
@@ -147,30 +141,6 @@ public class RoleManagementEventHookHandler extends AbstractEventHandler {
 
         publishRoleManagementEvent(tenantDomain, roleChannel, eventUri, eventProfile.getProfile(),
                 payloadBuilder, eventData, event.getEventName());
-    }
-
-    /**
-     * Returns true when the thread-local identity context is scoped to a sub-organization, i.e. the currently
-     * accessed organization is not the root of the hierarchy.
-     *
-     * NOTE: EventHookHandlerUtils.isSubOrgLevel() (commit a9effd43) compares org.id == org.parentOrganizationId,
-     * which is never true for any real organization and therefore always returns false. That helper is left
-     * unchanged to avoid side-effects on TokenEventHookHandler; this local check is used instead.
-     */
-    private static boolean isAccessingSubOrganization() throws IdentityEventException {
-
-        IdentityContext ctx = IdentityContext.getThreadLocalIdentityContext();
-        String tenantDomain = ctx.getTenantDomain();
-        try {
-            if (tenantDomain != null && OrganizationManagementUtil.isOrganization(tenantDomain)) {
-                LOG.debug("Accessing sub organization: " + ctx.getTenantDomain() + " (root organization is null)");
-                return true;
-            }
-        } catch (OrganizationManagementException e) {
-            throw new IdentityEventException(
-                    "Error while checking if the tenant domain is a sub-organization: " + tenantDomain, e);
-        }
-        return false;
     }
 
     private boolean isSupportedEvent(String eventName) {
