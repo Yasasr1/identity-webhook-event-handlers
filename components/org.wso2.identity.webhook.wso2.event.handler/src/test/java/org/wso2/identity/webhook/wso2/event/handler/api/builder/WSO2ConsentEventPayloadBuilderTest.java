@@ -18,6 +18,7 @@
 
 package org.wso2.identity.webhook.wso2.event.handler.api.builder;
 
+import org.mockito.Answers;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -49,6 +50,9 @@ import org.wso2.identity.webhook.common.event.handler.api.constants.Constants;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.wso2.event.handler.internal.component.WSO2EventHookHandlerDataHolder;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2ConsentAddedEventPayload;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2ConsentRevokedEventPayload;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
+import org.wso2.identity.webhook.wso2.event.handler.internal.util.WSO2PayloadUtils;
 import org.wso2.identity.webhook.wso2.event.handler.internal.util.CommonTestUtils;
 
 import java.nio.file.Paths;
@@ -58,6 +62,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -95,6 +100,7 @@ public class WSO2ConsentEventPayloadBuilderTest {
     private static final String SAMPLE_INITIATOR_IP = "10.0.0.5";
     private static final String USER_NAME = "john.doe";
     private static final String USER_STORE_DOMAIN = "PRIMARY";
+    private static final String SUB_ORG_TENANT_DOMAIN = "myorg.sub";
 
     @Mock
     private ConsentManager consentManager;
@@ -402,4 +408,213 @@ public class WSO2ConsentEventPayloadBuilderTest {
         builder.buildConsentAddedEvent(eventData);
     }
 
+    /**
+     * Verifies that a consent added through the receipt path reads the user from the tenant the
+     * event carries, rather than from the root tenant of the hierarchy.
+     * <p>
+     * {@code resolveTenant()} names the root organization, which is what the payload's tenant block
+     * reports. The user, though, lives in the organization the consent was given in, and for a sub
+     * organization that is a different tenant. Reading the user from the root tenant there resolves
+     * the wrong user, or none at all.
+     * <p>
+     * The tenant domain reaches {@link WSO2PayloadUtils#buildUser(String, String, String)} and
+     * nothing else, and that method returns an empty {@link User} when no realm is available, so
+     * the argument cannot be observed from the payload. It is stubbed on a static mock and asserted
+     * directly. {@link Answers#CALLS_REAL_METHODS} keeps every other {@code WSO2PayloadUtils}
+     * helper the builder relies on behaving normally.
+     * <p>
+     * The tenant block is asserted too, to pin that this affects only the user lookup: an event
+     * raised in a sub organization is still reported as belonging to the root tenant.
+     */
+    @Test
+    public void testAddedEventUsesEventTenant() throws Exception {
+
+        EventData eventData = mock(EventData.class);
+        when(eventData.getEventParams()).thenReturn(buildReceiptInputParams());
+        when(eventData.getTenantDomain()).thenReturn(SUB_ORG_TENANT_DOMAIN);
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Answers.CALLS_REAL_METHODS)) {
+            payloadUtils.when(() -> WSO2PayloadUtils.buildUser(anyString(), anyString(), anyString()))
+                    .thenReturn(new User());
+
+            List<EventPayload> payloads = builder.buildConsentAddedEvent(eventData);
+
+            assertEquals(payloads.size(), 1);
+            payloadUtils.verify(() -> WSO2PayloadUtils.buildUser(USER_STORE_DOMAIN, SUBJECT_ID,
+                    SUB_ORG_TENANT_DOMAIN));
+
+            WSO2ConsentAddedEventPayload payload = (WSO2ConsentAddedEventPayload) payloads.get(0);
+            assertEquals(payload.getTenant().getName(), TENANT_DOMAIN);
+            assertEquals(payload.getTenant().getId(), String.valueOf(TENANT_ID));
+        }
+    }
+
+    /**
+     * Verifies that an empty tenant domain on the event is ignored in favour of the root tenant.
+     * <p>
+     * This is the case the {@code StringUtils.isNotEmpty} guard exists for. An event that carries no
+     * tenant is the ordinary root-organization flow; were the empty value preferred, the user would
+     * be looked up in no tenant at all and the payload would carry an empty user. A null tenant
+     * domain takes the same branch, and is covered by
+     * {@link #testRevokedEventFallsBackToRootTenant()}.
+     *
+     * @see #testAddedEventUsesEventTenant() for why the argument is asserted on a static mock.
+     */
+    @Test
+    public void testAddedEventFallsBackToRootTenant() throws Exception {
+
+        EventData eventData = mock(EventData.class);
+        when(eventData.getEventParams()).thenReturn(buildReceiptInputParams());
+        when(eventData.getTenantDomain()).thenReturn("");
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Answers.CALLS_REAL_METHODS)) {
+            payloadUtils.when(() -> WSO2PayloadUtils.buildUser(anyString(), anyString(), anyString()))
+                    .thenReturn(new User());
+
+            List<EventPayload> payloads = builder.buildConsentAddedEvent(eventData);
+
+            assertEquals(payloads.size(), 1);
+            payloadUtils.verify(() -> WSO2PayloadUtils.buildUser(USER_STORE_DOMAIN, SUBJECT_ID,
+                    TENANT_DOMAIN));
+        }
+    }
+
+    /**
+     * Verifies that a revoked consent reads the user from the tenant the event carries.
+     * <p>
+     * The revocation path resolves its subject from the stored receipt rather than from the event
+     * parameters, so it reaches {@code buildUser} by a route of its own and needs covering
+     * separately from the added-consent path.
+     * <p>
+     * The consent fields are asserted alongside the tenant because this is also the first coverage
+     * of {@code buildConsentRevokedEvent}: it confirms the payload is a
+     * {@link WSO2ConsentRevokedEventPayload} carrying the receipt id, the subject read from the
+     * receipt, and the service the purpose belonged to.
+     *
+     * @see #testAddedEventUsesEventTenant() for why the argument is asserted on a static mock.
+     */
+    @Test
+    public void testRevokedEventUsesEventTenant() throws Exception {
+
+        mockReceiptForRevocation();
+
+        EventData eventData = mock(EventData.class);
+        Map<String, Object> params = new HashMap<>();
+        params.put(ConsentConstants.RECEIPT_ID, RECEIPT_ID);
+        when(eventData.getEventParams()).thenReturn(params);
+        when(eventData.getTenantDomain()).thenReturn(SUB_ORG_TENANT_DOMAIN);
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Answers.CALLS_REAL_METHODS)) {
+            payloadUtils.when(() -> WSO2PayloadUtils.buildUser(anyString(), anyString(), anyString()))
+                    .thenReturn(new User());
+
+            List<EventPayload> payloads = builder.buildConsentRevokedEvent(eventData);
+
+            assertEquals(payloads.size(), 1);
+            assertTrue(payloads.get(0) instanceof WSO2ConsentRevokedEventPayload);
+            payloadUtils.verify(() -> WSO2PayloadUtils.buildUser(USER_STORE_DOMAIN, SUBJECT_ID,
+                    SUB_ORG_TENANT_DOMAIN));
+
+            WSO2ConsentRevokedEventPayload payload = (WSO2ConsentRevokedEventPayload) payloads.get(0);
+            assertEquals(payload.getTenant().getName(), TENANT_DOMAIN);
+            assertEquals(payload.getConsent().getId(), RECEIPT_ID);
+            assertEquals(payload.getConsent().getSubjectId(), SUBJECT_ID);
+            assertEquals(payload.getConsent().getServiceId(), SERVICE_ID);
+        }
+    }
+
+    /**
+     * Verifies that a revoked consent falls back to the root tenant when the event carries no
+     * tenant domain at all.
+     * <p>
+     * Covers the null arm of the guard, which is the state an {@link EventData} built without a
+     * tenant domain arrives in; {@link #testAddedEventFallsBackToRootTenant()} covers the empty
+     * arm on the added-consent path.
+     *
+     * @see #testAddedEventUsesEventTenant() for why the argument is asserted on a static mock.
+     */
+    @Test
+    public void testRevokedEventFallsBackToRootTenant() throws Exception {
+
+        mockReceiptForRevocation();
+
+        EventData eventData = mock(EventData.class);
+        Map<String, Object> params = new HashMap<>();
+        params.put(ConsentConstants.RECEIPT_ID, RECEIPT_ID);
+        when(eventData.getEventParams()).thenReturn(params);
+        when(eventData.getTenantDomain()).thenReturn(null);
+
+        try (MockedStatic<WSO2PayloadUtils> payloadUtils =
+                     mockStatic(WSO2PayloadUtils.class, Answers.CALLS_REAL_METHODS)) {
+            payloadUtils.when(() -> WSO2PayloadUtils.buildUser(anyString(), anyString(), anyString()))
+                    .thenReturn(new User());
+
+            List<EventPayload> payloads = builder.buildConsentRevokedEvent(eventData);
+
+            assertEquals(payloads.size(), 1);
+            payloadUtils.verify(() -> WSO2PayloadUtils.buildUser(USER_STORE_DOMAIN, SUBJECT_ID,
+                    TENANT_DOMAIN));
+        }
+    }
+
+
+    /**
+     * Event parameters carrying a V2 receipt with one service and one purpose. The single PII
+     * category is unconsented, so it is skipped without the consent manager having to resolve a
+     * category name -- these tests are about the tenant, not about the elements.
+     */
+    private Map<String, Object> buildReceiptInputParams() {
+
+        ReceiptPurposeInput purposeInput = new ReceiptPurposeInput();
+        purposeInput.setPurposeId(PURPOSE_ID_INT);
+        purposeInput.setPurposeUuid(PURPOSE_UUID);
+        purposeInput.setPurposeName(PURPOSE_NAME);
+        purposeInput.setPurposeVersionId(PURPOSE_VERSION);
+        purposeInput.setPiiCategory(
+                Collections.singletonList(new PIICategoryValidity(1, "INDEFINITE", false)));
+
+        ReceiptServiceInput serviceInput = new ReceiptServiceInput();
+        serviceInput.setService(SERVICE_ID);
+        serviceInput.setPurposes(Collections.singletonList(purposeInput));
+
+        ReceiptInput receiptInput = new ReceiptInput();
+        receiptInput.setConsentReceiptId(RECEIPT_ID);
+        receiptInput.setPiiPrincipalId(SUBJECT_ID);
+        receiptInput.setState("ACTIVE");
+        receiptInput.setCollectionMethod("V2");
+        receiptInput.setServices(Collections.singletonList(serviceInput));
+
+        Map<String, Object> params = new HashMap<>();
+        params.put(ConsentConstants.RECEIPT_INPUT, receiptInput);
+        return params;
+    }
+
+    /**
+     * Stubs the consent manager with a receipt the revocation path can walk. doReturn is used
+     * rather than when/thenReturn because the consent manager is a class level mock that another
+     * test in this class stubs to throw for the same receipt id.
+     */
+    private void mockReceiptForRevocation() throws ConsentManagementException {
+
+        org.wso2.carbon.consent.mgt.core.model.ConsentPurpose consentPurpose =
+                mock(org.wso2.carbon.consent.mgt.core.model.ConsentPurpose.class);
+        when(consentPurpose.getUuid()).thenReturn(PURPOSE_UUID);
+        when(consentPurpose.getPurpose()).thenReturn(PURPOSE_NAME);
+        when(consentPurpose.getPurposeVersionId()).thenReturn(PURPOSE_VERSION);
+        when(consentPurpose.getPiiCategory()).thenReturn(
+                Collections.singletonList(new PIICategoryValidity(1, "INDEFINITE", false)));
+
+        ReceiptService receiptService = mock(ReceiptService.class);
+        when(receiptService.getService()).thenReturn(SERVICE_ID);
+        when(receiptService.getPurposes()).thenReturn(Collections.singletonList(consentPurpose));
+
+        Receipt receipt = mock(Receipt.class);
+        when(receipt.getPiiPrincipalId()).thenReturn(SUBJECT_ID);
+        when(receipt.getServices()).thenReturn(Collections.singletonList(receiptService));
+
+        doReturn(receipt).when(consentManager).getReceiptWithExtendedSchema(RECEIPT_ID);
+    }
 }

@@ -103,7 +103,11 @@ public class WSO2ConsentEventPayloadBuilder implements ConsentEventPayloadBuilde
         String[] userContext = resolveUserContext(subjectId);
         String userStoreDomain = userContext[0];
         String userName = userContext[1];
-        User user = WSO2PayloadUtils.buildUser(userStoreDomain, userName, tenant.getName());
+        String tenantDomain = tenant.getName();
+        if (StringUtils.isNotEmpty(eventData.getTenantDomain())) {
+            tenantDomain = eventData.getTenantDomain();
+        }
+        User user = WSO2PayloadUtils.buildUser(userStoreDomain, userName, tenantDomain);
         UserStore userStore = new UserStore(userStoreDomain);
 
         List<ReceiptServiceInput> services = receiptInput.getServices();
@@ -247,7 +251,11 @@ public class WSO2ConsentEventPayloadBuilder implements ConsentEventPayloadBuilde
             String[] userContext = resolveUserContext(subjectId);
             String userStoreDomain = userContext[0];
             String userName = userContext[1];
-            User user = WSO2PayloadUtils.buildUser(userStoreDomain, userName, tenant.getName());
+            String tenantDomain = tenant.getName();
+            if (StringUtils.isNotEmpty(eventData.getTenantDomain())) {
+                tenantDomain = eventData.getTenantDomain();
+            }
+            User user = WSO2PayloadUtils.buildUser(userStoreDomain, userName, tenantDomain);
             UserStore userStore = new UserStore(userStoreDomain);
 
             List<ReceiptService> services = receipt.getServices();
