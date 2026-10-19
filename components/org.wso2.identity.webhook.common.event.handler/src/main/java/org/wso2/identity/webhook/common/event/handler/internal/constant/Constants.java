@@ -92,4 +92,20 @@ public class Constants {
     public static final String CONSOLE_APP_CONSUMER_KEY = "CONSOLE";
     public static final String CONSOLE_APP_NAME = "Console";
 
+    /**
+     * Context property the framework sets for a login to a shared application, carrying whether the owning
+     * application has the enhanced organization login enabled.
+     */
+    public static final String ENHANCED_ORG_LOGIN_ENABLED = "enhancedOrgLoginEnabled";
+
+    /**
+     * Service provider property marking an application shared with an organization.
+     */
+    public static final String IS_FRAGMENT_APP = "isFragmentApp";
+
+    /**
+     * Client type of OAuth2 application, as the application management service names it.
+     */
+    public static final String OAUTH2_CLIENT_TYPE = "oauth2";
+
 }

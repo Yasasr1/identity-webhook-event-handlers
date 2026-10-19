@@ -36,6 +36,7 @@ public class User {
     private List<UserClaim> addedClaims;
     private List<UserClaim> updatedClaims;
     private List<UserClaim> removedClaims;
+    private SharedUserProfile sharedUserProfile;
 
     public List<String> getGroups() {
 
@@ -171,4 +172,13 @@ public class User {
         }
     }
 
+    public SharedUserProfile getSharedUserProfile() {
+
+        return sharedUserProfile;
+    }
+
+    public void setSharedUserProfile(SharedUserProfile sharedUserProfile) {
+
+        this.sharedUserProfile = sharedUserProfile;
+    }
 }

@@ -26,6 +26,7 @@ public class Application {
     private String id;
     private String name;
     private String consumerKey;
+    private Organization organization;
 
     public String getId() {
 
@@ -42,11 +43,17 @@ public class Application {
         return consumerKey;
     }
 
+    public Organization getOrganization() {
+
+        return organization;
+    }
+
     private Application(Builder builder) {
 
         this.id = builder.id;
         this.name = builder.name;
         this.consumerKey = builder.consumerKey;
+        this.organization = builder.organization;
     }
 
     /**
@@ -57,6 +64,7 @@ public class Application {
         private String id;
         private String name;
         private String consumerKey;
+        private Organization organization;
 
         public Builder id(String id) {
 
@@ -73,6 +81,14 @@ public class Application {
         public Builder consumerKey(String consumerKey) {
 
             this.consumerKey = consumerKey;
+            return this;
+        }
+
+        public Builder organization(Organization organization) {
+
+            if (organization != null) {
+                this.organization = organization;
+            }
             return this;
         }
 

@@ -48,7 +48,9 @@ public class TestUtils {
             @Override
             public ServiceURLBuilder addPath(String... strings) {
 
-                this.path = "/t/myorg";
+                // A path that already carries the tenant or organization perspective is used as given, the way
+                // the real builder leaves such a path unqualified.
+                this.path = "";
                 Arrays.stream(strings).forEach(x -> {
                     path += x;
                 });
