@@ -138,7 +138,8 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
 
             User deletedUser = new User();
             deletedUser.setId(userId);
-            deletedUser.setRef(WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + userId);
+            deletedUser.setRef(WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT,
+                    accessedTenantDomain) + "/" + userId);
             deletedUser.setClaims(userClaims);
 
             Tenant tenant = new Tenant(rootTenantId, rootTenantDomain);
@@ -188,12 +189,14 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
 
         String userName =
                 String.valueOf(eventData.getEventParams().get(IdentityEventConstants.EventProperty.USER_NAME));
+        String accessedTenantDomain = String.valueOf(
+                IdentityContext.getThreadLocalIdentityContext().getOrganization().getOrganizationHandle());
 
         User user = new User();
         enrichUser(userStoreManager, userName, user,
                 IdentityContext.getThreadLocalIdentityContext().getOrganization().getOrganizationHandle());
-        user.setRef(
-                WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+        user.setRef(WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, accessedTenantDomain)
+                + "/" + user.getId());
 
         Tenant tenant = new Tenant(rootTenantId, rootTenantDomain);
 
@@ -244,8 +247,8 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
                 String.valueOf(eventData.getEventParams().get(IdentityEventConstants.EventProperty.USER_NAME));
         enrichUser(userStoreManager, userName, user, accessedTenantDomain);
 
-        user.setRef(
-                WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+        user.setRef(WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, accessedTenantDomain)
+                + "/" + user.getId());
 
         Tenant tenant = new Tenant(rootTenantId, rootTenantDomain);
 
@@ -304,8 +307,8 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
 
         User user = new User();
         user.setId(userId);
-        user.setRef(
-                WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT) + "/" + user.getId());
+        user.setRef(WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, accessedTenantDomain)
+                + "/" + user.getId());
         user.setAdditionalClaims(additionalClaims);
         user.setAddedClaims(addedClaims);
         user.setUpdatedClaims(modifiedClaims);

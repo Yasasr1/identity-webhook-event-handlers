@@ -188,7 +188,7 @@ public class WSO2RoleManagementEventPayloadBuilder implements RoleManagementEven
         List<String> removedUserIds =
                 toStringList(props.get(IdentityEventConstants.EventProperty.DELETE_USER_ID_LIST));
 
-        String roleUsersRef = buildRoleRef(roleId) + "/users";
+        String roleUsersRef = buildRoleRef(roleId, tenantDomain) + "/users";
         final AbstractUserStoreManager userManager = getAbstractUserStoreManager(tenantDomain);
 
         applyTruncatedList(addedUserIds, ids -> toEnrichedUserEntries(ids, userManager),
@@ -225,7 +225,7 @@ public class WSO2RoleManagementEventPayloadBuilder implements RoleManagementEven
         List<String> removedGroupIds =
                 toStringList(props.get(IdentityEventConstants.EventProperty.DELETE_GROUP_ID_LIST));
 
-        String roleRef = buildRoleRef(roleId);
+        String roleRef = buildRoleRef(roleId, tenantDomain);
         final AbstractUserStoreManager userManager = getAbstractUserStoreManager(tenantDomain);
 
         applyTruncatedList(addedGroupIds, ids -> toEnrichedGroupEntries(ids, userManager),
@@ -262,7 +262,7 @@ public class WSO2RoleManagementEventPayloadBuilder implements RoleManagementEven
         List<IdpGroup> removedIdpGroups = toIdpGroupList(props.get(
                 IdentityEventConstants.EventProperty.DELETE_GROUP_ID_LIST));
 
-        String roleRef = buildRoleRef(roleId);
+        String roleRef = buildRoleRef(roleId, tenantDomain);
 
         applyTruncatedList(addedIdpGroups, groups -> toEnrichedIdpGroupEntries(groups, tenantDomain),
                 role::setAddedIdpGroups, role::setAddedIdpGroupsTruncated,
@@ -349,7 +349,7 @@ public class WSO2RoleManagementEventPayloadBuilder implements RoleManagementEven
     private <R extends RoleRef> R enrichRole(R role, String roleId, String tenantDomain) {
 
         role.setId(roleId);
-        role.setRef(buildRoleRef(roleId));
+        role.setRef(buildRoleRef(roleId, tenantDomain));
         RoleBasicInfo basicInfo = getRoleBasicInfo(roleId, tenantDomain);
         if (basicInfo != null) {
             role.setName(basicInfo.getName());
@@ -387,9 +387,9 @@ public class WSO2RoleManagementEventPayloadBuilder implements RoleManagementEven
     /**
      * Build the SCIM2 roles ref URL for the given role ID in the current tenant context.
      */
-    private String buildRoleRef(String roleId) {
+    private String buildRoleRef(String roleId, String tenantDomain) {
 
-        String baseUrl = WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_ROLES_ENDPOINT);
+        String baseUrl = WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_ROLES_ENDPOINT, tenantDomain);
         return (baseUrl != null) ? baseUrl + "/" + roleId : null;
     }
 
