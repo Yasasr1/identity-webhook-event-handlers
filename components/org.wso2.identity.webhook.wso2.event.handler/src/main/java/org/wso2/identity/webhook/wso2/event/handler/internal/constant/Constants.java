@@ -35,6 +35,12 @@ public class Constants {
     public static final String SCIM2_ROLES_ENDPOINT = "/scim2/v2/Roles";
     public static final String ORGANIZATIONS_API_ENDPOINT = "/api/server/v1/organizations";
     public static final String CONSOLE_APP_CONSUMER_KEY = "CONSOLE";
+
+    /**
+     * Event property carrying the identifier of the user's profile in the organization it is accessing, which a
+     * user shared into that organization has in addition to the one it has where it resides.
+     */
+    public static final String SHARED_USER_ID = "SHARED_USER_ID";
     public static final String CONSOLE_APP_NAME = "Console";
 
     public static final String GROUPS_CLAIM = "http://wso2.org/claims/groups";

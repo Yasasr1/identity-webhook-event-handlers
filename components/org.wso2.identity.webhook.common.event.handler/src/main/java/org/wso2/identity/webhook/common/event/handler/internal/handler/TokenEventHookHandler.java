@@ -21,7 +21,13 @@ package org.wso2.identity.webhook.common.event.handler.internal.handler;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.wso2.carbon.identity.application.common.IdentityApplicationManagementException;
+import org.wso2.carbon.identity.application.common.model.ServiceProvider;
+import org.wso2.carbon.identity.application.mgt.ApplicationManagementService;
 import org.wso2.carbon.identity.base.IdentityRuntimeException;
+import org.wso2.carbon.identity.core.context.IdentityContext;
+import org.wso2.carbon.identity.core.context.model.Organization;
+import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.event.Event;
@@ -30,6 +36,7 @@ import org.wso2.carbon.identity.event.publisher.api.exception.EventPublisherExce
 import org.wso2.carbon.identity.event.publisher.api.model.EventContext;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
 import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayload;
+import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
 import org.wso2.identity.webhook.common.event.handler.api.builder.TokenEventPayloadBuilder;
@@ -40,11 +47,14 @@ import org.wso2.identity.webhook.common.event.handler.internal.constant.Constant
 import org.wso2.identity.webhook.common.event.handler.internal.util.EventHookHandlerUtils;
 import org.wso2.identity.webhook.common.event.handler.internal.util.PayloadBuilderFactory;
 
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.CONSOLE_APP_CONSUMER_KEY;
+import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.IS_FRAGMENT_APP;
+import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.OAUTH2_CLIENT_TYPE;
 
 /**
  * TokenEventHookHandler class.
@@ -134,10 +144,101 @@ public class TokenEventHookHandler extends AbstractEventHandler {
             return;
         }
 
-        // Publish for current accessing org
-        String tenantDomain = eventData.getTenantDomain();
-        publishEvent(tenantDomain, tokenChannel, eventUri, eventProfile.getProfile(),
-                payloadBuilder, eventData, event.getEventName());
+        if (isTokenOfSharedApplicationExchange(applicationKey, eventData)) {
+            log.debug("Token belongs to the shared application of an organization login exchange. The token of " +
+                    "the application the user logged in to is the one published, so this one is skipped for token " +
+                    "event profile: " + eventProfile.getProfile());
+            return;
+        }
+
+        /*
+         A token issued through a sub organization is raised in the organization owning the application, so the
+         event belongs to the organization being accessed rather than to the tenant it was raised in. The resolved
+         tenant replaces the one the event data was built with, so that the payload is built for the same
+         organization the event is published to.
+         */
+        EventData publishingEventData = eventData.toBuilder()
+                .tenantDomain(resolvePublishingTenantDomain(eventData))
+                .build();
+        publishEvent(publishingEventData.getTenantDomain(), tokenChannel, eventUri, eventProfile.getProfile(),
+                payloadBuilder, publishingEventData, event.getEventName());
+    }
+
+    /**
+     * Tenant the token event is published to.
+     * <p>
+     * For a token issued through a sub organization this is that organization, as it is for the login and session
+     * events: the token lets the user act in the organization it is accessing, so that is the organization the
+     * event belongs to, whether the user resides there or was shared into it from an ancestor organization. For
+     * every other token it is the tenant the token was issued in.
+     *
+     * @param eventData Data of the token event.
+     * @return Tenant domain to publish the event to.
+     */
+    private String resolvePublishingTenantDomain(EventData eventData) {
+
+        String eventOrganizationId = resolveEventOrganizationId(eventData);
+        if (StringUtils.isBlank(eventOrganizationId)) {
+            /*
+             A token requested through the organization perspective of a tenant keeps that tenant on the thread and
+             names the organization separately, so the organization of the context is what the event belongs to.
+             */
+            return resolveContextOrganizationTenantDomain(eventData);
+        }
+        try {
+            String eventTenantDomain = EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                    .resolveTenantDomain(eventOrganizationId);
+            return StringUtils.isNotBlank(eventTenantDomain) ? eventTenantDomain
+                    : resolveContextOrganizationTenantDomain(eventData);
+        } catch (OrganizationManagementException e) {
+            log.warn("Error while resolving the tenant of organization: " + eventOrganizationId, e);
+            return resolveContextOrganizationTenantDomain(eventData);
+        }
+    }
+
+    /**
+     * Organization the token was issued through, which is the one the user is accessing with it.
+     * <p>
+     * The organization the user resides in is taken when the event does not name the one being accessed. They are
+     * the same organization for a user residing in the sub organization it logs in to, and differ for a user
+     * shared into it, which the event states separately.
+     * <p>
+     * The event's own statement of whether the user is an organization user is not used: it holds only for a user
+     * federated from an organization, as on the legacy organization login flow, while a user authenticating
+     * directly against the organization it resides in is not federated and is an organization user all the same.
+     *
+     * @param eventData Data of the token event.
+     * @return Identifier of that organization, or null when the event names none.
+     */
+    private String resolveEventOrganizationId(EventData eventData) {
+
+        String accessingOrganizationId = getProperty(eventData,
+                IdentityEventConstants.EventProperty.ACCESSING_ORGANIZATION_ID);
+        return StringUtils.isNotBlank(accessingOrganizationId) ? accessingOrganizationId
+                : getProperty(eventData, IdentityEventConstants.EventProperty.USER_RESIDENT_ORGANIZATION_ID);
+    }
+
+    private String getProperty(EventData eventData, String propertyName) {
+
+        Object property = eventData.getProperties().get(propertyName);
+        return property != null ? StringUtils.trimToNull(String.valueOf(property)) : null;
+    }
+
+    /**
+     * Tenant of the organization on the thread, which is the organization the event belongs to when the request
+     * was made through the organization perspective of a tenant.
+     *
+     * @param eventData Data of the token event.
+     * @return Tenant of that organization, or the tenant of the event when there is none.
+     */
+    private String resolveContextOrganizationTenantDomain(EventData eventData) {
+
+        Organization organization = IdentityContext.getThreadLocalIdentityContext().getOrganization();
+        if (organization == null || StringUtils.isBlank(organization.getOrganizationHandle())
+                || organization.getDepth() == 0) {
+            return eventData.getTenantDomain();
+        }
+        return organization.getOrganizationHandle();
     }
 
     private void publishEvent(String tenantDomain, Channel tokenChannel, String eventUri, String eventProfileName,
@@ -170,6 +271,51 @@ public class TokenEventHookHandler extends AbstractEventHandler {
                 EventHookHandlerUtils.buildSecurityEventToken(eventPayload, eventUri);
         EventHookHandlerDataHolder.getInstance().getEventPublisherService()
                 .publish(securityEventTokenPayload, eventContext);
+    }
+
+    /**
+     * Whether the token was issued to the shared application an organization login exchanges through.
+     * <p>
+     * On the legacy organization login flow the authenticator authenticates the user against the application
+     * shared with the sub organization, and that exchange issues a token of its own. The token of the application
+     * the user actually logged in to is issued separately and is the one worth publishing, so the exchange's token
+     * is skipped. The enhanced flow issues no such token, and its applications are left alone.
+     *
+     * @param applicationKey Consumer key the token was issued to.
+     * @param eventData      Data of the token event.
+     * @return true if the token belongs to such an exchange.
+     */
+    private boolean isTokenOfSharedApplicationExchange(String applicationKey, EventData eventData) {
+
+        if (StringUtils.isBlank(applicationKey)) {
+            return false;
+        }
+        try {
+            ApplicationManagementService applicationManagementService =
+                    EventHookHandlerDataHolder.getInstance().getApplicationManagementService();
+            ServiceProvider serviceProvider = applicationManagementService.getServiceProviderByClientId(
+                    applicationKey, OAUTH2_CLIENT_TYPE, eventData.getTenantDomain());
+            if (serviceProvider == null || serviceProvider.getSpProperties() == null || !Arrays.stream(
+                    serviceProvider.getSpProperties()).anyMatch(property -> IS_FRAGMENT_APP.equals(property.getName())
+                    && Boolean.parseBoolean(property.getValue()))) {
+                return false;
+            }
+            String mainApplicationId =
+                    applicationManagementService.getMainAppId(serviceProvider.getApplicationResourceId());
+            if (StringUtils.isBlank(mainApplicationId)) {
+                return false;
+            }
+            String mainApplicationTenantDomain = IdentityTenantUtil.getTenantDomain(
+                    applicationManagementService.getTenantIdByApp(mainApplicationId));
+            ServiceProvider mainApplication = applicationManagementService.getApplicationByResourceId(
+                    mainApplicationId, mainApplicationTenantDomain);
+            // The enhanced flow works against one application only, so its events are the only ones there are.
+            return mainApplication != null && !mainApplication.isEnhancedOrganizationAuthenticationEnabled();
+        } catch (IdentityApplicationManagementException e) {
+            log.warn("Error while checking whether the token was issued to a shared application: " + applicationKey,
+                    e);
+            return false;
+        }
     }
 
     private String resolveApplicationKey(EventData eventData) {
