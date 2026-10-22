@@ -65,6 +65,19 @@ public interface UserOperationEventPayloadBuilder {
     }
 
     /**
+     * Build the payload of a role added to, or removed from, one user.
+     *
+     * @param eventData Event data, carrying the user and the change as the properties of
+     *                  {@link Constants.UserRoleEvent}.
+     * @return Event payload, or null if the schema does not support the event.
+     * @throws IdentityEventException If the payload cannot be built.
+     */
+    default EventPayload buildUserRolesUpdatedEvent(EventData eventData) throws IdentityEventException {
+
+        return null;
+    }
+
+    /**
      * Get the event schema type.
      *
      * @return Event schema type.

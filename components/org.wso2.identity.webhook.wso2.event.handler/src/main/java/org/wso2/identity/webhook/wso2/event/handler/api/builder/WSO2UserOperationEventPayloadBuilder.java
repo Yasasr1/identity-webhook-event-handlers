@@ -28,23 +28,32 @@ import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
+import org.wso2.carbon.identity.organization.management.organization.user.sharing.OrganizationUserSharingService;
+import org.wso2.carbon.identity.organization.management.organization.user.sharing.models.UserAssociation;
 import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
 import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
+import org.wso2.carbon.identity.role.v2.mgt.core.RoleManagementService;
+import org.wso2.carbon.identity.role.v2.mgt.core.exception.IdentityRoleManagementException;
+import org.wso2.carbon.identity.role.v2.mgt.core.model.RoleBasicInfo;
 import org.wso2.carbon.user.api.UserStoreException;
 import org.wso2.carbon.user.api.UserStoreManager;
 import org.wso2.carbon.user.core.UserCoreConstants;
 import org.wso2.carbon.user.core.common.AbstractUserStoreManager;
 import org.wso2.identity.webhook.common.event.handler.api.builder.UserOperationEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.constants.Constants;
+import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserRoleEvent;
 import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserSharingEvent;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.wso2.event.handler.internal.component.WSO2EventHookHandlerDataHolder;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserAccountEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserCreatedEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserGroupUpdateEventPayload;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserRolesUpdatedEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserSharingEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Group;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.RoleAudience;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.RoleRef;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.TargetOrganization;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
@@ -53,6 +62,7 @@ import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.UserSt
 import org.wso2.identity.webhook.wso2.event.handler.internal.util.WSO2PayloadUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -60,6 +70,7 @@ import java.util.Optional;
 import static org.wso2.carbon.identity.event.IdentityEventConstants.EventProperty.USER_STORE_MANAGER;
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.PRE_DELETE_USER_ID;
 import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants.ORGANIZATIONS_API_ENDPOINT;
+import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants.SCIM2_ROLES_ENDPOINT;
 import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants.SCIM2_USERS_ENDPOINT;
 
 /**
@@ -70,6 +81,7 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
     private static final Log LOG = LogFactory.getLog(WSO2UserOperationEventPayloadBuilder.class);
     private static final String USER_SHARE_ACTION = "USER_SHARE";
     private static final String USER_UNSHARE_ACTION = "USER_UNSHARE";
+    private static final String USER_ROLES_UPDATE_ACTION = "USER_ROLES_UPDATE";
 
     @Override
     public EventPayload buildUserGroupUpdateEvent(EventData eventData) throws IdentityEventException {
@@ -543,6 +555,119 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
                 .sharedUser(sharedUser)
                 .sharedType(getStringProperty(properties, UserSharingEvent.SHARED_TYPE))
                 .build();
+    }
+
+    @Override
+    public EventPayload buildUserRolesUpdatedEvent(EventData eventData) {
+
+        Map<String, Object> properties = eventData.getEventParams();
+        // The tenant the role membership changed in, which is the organization the roles belong to.
+        String tenantDomain = eventData.getTenantDomain();
+        String userId = getStringProperty(properties, UserRoleEvent.ROLE_MEMBER_USER_ID);
+        String roleId = getStringProperty(properties, IdentityEventConstants.EventProperty.ROLE_ID);
+        Organization organization = WSO2PayloadUtils.buildOrganizationFromTenantDomain(tenantDomain);
+
+        User user = new User();
+        User sharedUser = null;
+        UserAssociation association =
+                resolveUserAssociation(userId, organization != null ? organization.getId() : null);
+        if (association != null) {
+            String residentOrgId = association.getUserResidentOrganizationId();
+            String residentTenantDomain = resolveTenantDomainOfOrganization(residentOrgId);
+            user.setId(association.getAssociatedUserId());
+            user.setOrganization(WSO2PayloadUtils.buildOrganizationFromOrgId(residentOrgId, residentTenantDomain));
+            user.setRef(buildUserRef(residentTenantDomain, association.getAssociatedUserId()));
+            sharedUser = new User();
+            sharedUser.setId(userId);
+            sharedUser.setRef(buildUserRef(tenantDomain, userId));
+        } else {
+            user.setId(userId);
+            user.setOrganization(organization);
+            user.setRef(buildUserRef(tenantDomain, userId));
+        }
+        String userName = resolveUserName(tenantDomain, userId);
+        if (userName != null) {
+            List<UserClaim> claims = new ArrayList<>();
+            WSO2PayloadUtils.generateUserClaim(FrameworkConstants.USERNAME_CLAIM, userName, tenantDomain)
+                    .ifPresent(claims::add);
+            user.setClaims(claims);
+        }
+
+        List<RoleRef> roles = Collections.singletonList(buildRoleRef(roleId, tenantDomain));
+        boolean added = UserRoleEvent.ADDED.equals(getStringProperty(properties, UserRoleEvent.ROLE_MEMBER_CHANGE));
+        Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
+        return new WSO2UserRolesUpdatedEventPayload.Builder()
+                .initiatorType(WSO2PayloadUtils.getFlowInitiatorType(flow))
+                .initiatorIpAddress(WSO2PayloadUtils.resolveInitiatorIpAddress())
+                .action(USER_ROLES_UPDATE_ACTION)
+                .tenant(resolveRootTenant(tenantDomain))
+                .organization(organization)
+                .user(user)
+                .sharedUser(sharedUser)
+                .addedRoles(added ? roles : null)
+                .removedRoles(added ? null : roles)
+                .build();
+    }
+
+    /**
+     * Resolve the share a user profile stands for, when the profile belongs to a user shared with the organization.
+     */
+    private UserAssociation resolveUserAssociation(String userId, String organizationId) {
+
+        OrganizationUserSharingService sharingService =
+                WSO2EventHookHandlerDataHolder.getInstance().getOrganizationUserSharingService();
+        if (sharingService == null || userId == null || organizationId == null) {
+            return null;
+        }
+        try {
+            return sharingService.getUserAssociation(userId, organizationId);
+        } catch (OrganizationManagementException e) {
+            LOG.debug("Error while resolving the user association of user: " + userId, e);
+            return null;
+        }
+    }
+
+    private String resolveUserName(String tenantDomain, String userId) {
+
+        if (tenantDomain == null || userId == null) {
+            return null;
+        }
+        try {
+            UserStoreManager userStoreManager = WSO2EventHookHandlerDataHolder.getInstance().getRealmService()
+                    .getTenantUserRealm(IdentityTenantUtil.getTenantId(tenantDomain)).getUserStoreManager();
+            return ((AbstractUserStoreManager) userStoreManager).getUser(userId, null).getUsername();
+        } catch (UserStoreException | RuntimeException e) {
+            LOG.debug("Error while resolving the username of user: " + userId, e);
+            return null;
+        }
+    }
+
+    private RoleRef buildRoleRef(String roleId, String tenantDomain) {
+
+        RoleRef role = new RoleRef();
+        role.setId(roleId);
+        if (roleId == null || tenantDomain == null) {
+            return role;
+        }
+        role.setRef(WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_ROLES_ENDPOINT, tenantDomain) + "/" + roleId);
+        RoleManagementService roleManagementService =
+                WSO2EventHookHandlerDataHolder.getInstance().getRoleManagementService();
+        if (roleManagementService == null) {
+            return role;
+        }
+        try {
+            RoleBasicInfo basicInfo = roleManagementService.getRoleBasicInfoById(roleId, tenantDomain);
+            if (basicInfo != null) {
+                role.setName(basicInfo.getName());
+                if (StringUtils.isNotBlank(basicInfo.getAudience())) {
+                    role.setAudience(new RoleAudience(basicInfo.getAudience(), basicInfo.getAudienceId(),
+                            basicInfo.getAudienceName()));
+                }
+            }
+        } catch (IdentityRoleManagementException e) {
+            LOG.debug("Could not fetch the details of role: " + roleId + " in tenant: " + tenantDomain, e);
+        }
+        return role;
     }
 
     private String getStringProperty(Map<String, Object> properties, String key) {

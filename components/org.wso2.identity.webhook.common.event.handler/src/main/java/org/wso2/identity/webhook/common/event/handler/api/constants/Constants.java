@@ -69,8 +69,26 @@ public class Constants {
         public static final String ASSOCIATED_USER_ID = "ASSOCIATED_USER_ID";
         public static final String ASSOCIATED_ORGANIZATION_ID = "ASSOCIATED_ORGANIZATION_ID";
         public static final String SHARED_TYPE = "SHARED_TYPE";
+        // Thread-local flags user sharing sets while it creates or deletes the profile of a shared user.
+        public static final String PROCESS_ADD_SHARED_USER = "processAddSharedUser";
+        public static final String PROCESS_DELETE_SHARED_USER = "processDeleteSharedUser";
 
         private UserSharingEvent() {
+
+        }
+    }
+
+    /**
+     * Properties added to a role membership event when it is published once per affected user.
+     */
+    public static class UserRoleEvent {
+
+        public static final String ROLE_MEMBER_USER_ID = "ROLE_MEMBER_USER_ID";
+        public static final String ROLE_MEMBER_CHANGE = "ROLE_MEMBER_CHANGE";
+        public static final String ADDED = "ADDED";
+        public static final String REMOVED = "REMOVED";
+
+        private UserRoleEvent() {
 
         }
     }
@@ -85,6 +103,7 @@ public class Constants {
         public static final String POST_USER_CREATED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userCreated";
         public static final String POST_USER_SHARED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userShared";
         public static final String POST_USER_UNSHARED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userUnshared";
+        public static final String POST_USER_ROLES_UPDATED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userRolesUpdated";
         public static final String POST_UPDATE_USER_LIST_OF_ROLE_EVENT = "https://schemas.identity.wso2.org/events/group/event-type/groupUpdated";
         public static final String POST_DELETE_USER_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userDeleted";
         public static final String POST_UNLOCK_ACCOUNT_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userAccountUnlocked";

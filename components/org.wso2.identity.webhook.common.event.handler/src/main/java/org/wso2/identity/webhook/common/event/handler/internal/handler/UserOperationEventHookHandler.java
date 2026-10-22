@@ -37,6 +37,7 @@ import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayl
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
 import org.wso2.identity.webhook.common.event.handler.api.builder.UserOperationEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserRoleEvent;
 import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserSharingEvent;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata;
@@ -45,9 +46,16 @@ import org.wso2.identity.webhook.common.event.handler.internal.constant.Constant
 import org.wso2.identity.webhook.common.event.handler.internal.util.EventHookHandlerUtils;
 import org.wso2.identity.webhook.common.event.handler.internal.util.PayloadBuilderFactory;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Channel.USER_OPERATION_CHANNEL;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_USER_ROLES_UPDATED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.EVENT_PROFILE_VERSION;
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.PRE_DELETE_USER_ID;
 
@@ -95,6 +103,11 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
     public void handleEvent(Event event) throws IdentityEventException {
 
         try {
+            if (isSharedProfileOperation(event.getEventName())) {
+                log.debug("Skipping " + event.getEventName() + " of a shared user profile. It is published as " +
+                        "userShared or userUnshared.");
+                return;
+            }
             if (IdentityEventConstants.Event.PRE_DELETE_USER_WITH_ID.equals(event.getEventName())) {
                 String userId = (String) event.getEventProperties().get(IdentityEventConstants.EventProperty.USER_ID);
                 IdentityUtil.threadLocalProperties.get().put(PRE_DELETE_USER_ID, userId);
@@ -128,6 +141,10 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
             log.debug("Skipping user operation event handling for profile " + eventProfile.getProfile());
             return;
         }
+        if (IdentityEventConstants.Event.POST_UPDATE_USER_LIST_OF_ROLE_V2_EVENT.equals(event.getEventName())) {
+            handleUserRolesUpdated(event, eventProfile, payloadBuilder);
+            return;
+        }
         EventMetadata eventMetadata =
                 EventHookHandlerUtils.getEventProfileManagerByProfile(eventProfile.getProfile(), event.getEventName());
         if (eventMetadata == null) {
@@ -158,6 +175,73 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
                 payloadBuilder, eventData, event.getEventName());
     }
 
+    /**
+     * Publish a role membership change as one userRolesUpdated event per affected user, on the user channel. The
+     * role channel publishes the same change as a single roleUsersUpdated event, keyed by the role.
+     */
+    private void handleUserRolesUpdated(Event event, EventProfile eventProfile,
+                                        UserOperationEventPayloadBuilder payloadBuilder)
+            throws IdentityEventException, EventPublisherException {
+
+        Channel userOperationChannel = eventProfile.getChannels().stream()
+                .filter(channel -> USER_OPERATION_CHANNEL.equals(channel.getUri()))
+                .findFirst()
+                .orElse(null);
+        if (userOperationChannel == null || userOperationChannel.getEvents().stream()
+                .noneMatch(channelEvent -> POST_USER_ROLES_UPDATED_EVENT.equals(channelEvent.getEventUri()))) {
+            log.debug("The user channel of profile " + eventProfile.getProfile() + " has no userRolesUpdated event.");
+            return;
+        }
+        Map<String, Object> properties = event.getEventProperties();
+        publishUserRoleChanges(event, properties.get(IdentityEventConstants.EventProperty.NEW_USER_ID_LIST),
+                UserRoleEvent.ADDED, userOperationChannel, eventProfile, payloadBuilder);
+        publishUserRoleChanges(event, properties.get(IdentityEventConstants.EventProperty.DELETE_USER_ID_LIST),
+                UserRoleEvent.REMOVED, userOperationChannel, eventProfile, payloadBuilder);
+    }
+
+    private void publishUserRoleChanges(Event event, Object userIds, String change, Channel userOperationChannel,
+                                        EventProfile eventProfile, UserOperationEventPayloadBuilder payloadBuilder)
+            throws IdentityEventException, EventPublisherException {
+
+        for (String userId : toStringList(userIds)) {
+            Map<String, Object> properties = new HashMap<>(event.getEventProperties());
+            properties.put(UserRoleEvent.ROLE_MEMBER_USER_ID, userId);
+            properties.put(UserRoleEvent.ROLE_MEMBER_CHANGE, change);
+            EventData eventData =
+                    EventHookHandlerUtils.buildEventDataProvider(new Event(event.getEventName(), properties));
+            publishUserOperationEvent(eventData.getTenantDomain(), userOperationChannel, POST_USER_ROLES_UPDATED_EVENT,
+                    eventProfile.getProfile(), payloadBuilder, eventData, event.getEventName());
+        }
+    }
+
+    private static List<String> toStringList(Object value) {
+
+        List<String> values = new ArrayList<>();
+        if (value instanceof Collection) {
+            ((Collection<?>) value).forEach(item -> values.add(String.valueOf(item)));
+        } else if (value instanceof Object[]) {
+            Arrays.stream((Object[]) value).forEach(item -> values.add(String.valueOf(item)));
+        }
+        return values;
+    }
+
+    /**
+     * Whether the event is the creation or deletion of the profile user sharing keeps for a shared user. Such a
+     * profile is not a user of its own, and the share it stands for is published as userShared or userUnshared.
+     */
+    private boolean isSharedProfileOperation(String eventName) {
+
+        Map<String, Object> threadLocalProperties = IdentityUtil.threadLocalProperties.get();
+        if (IdentityEventConstants.Event.POST_ADD_USER.equals(eventName)) {
+            return Boolean.TRUE.equals(threadLocalProperties.get(UserSharingEvent.PROCESS_ADD_SHARED_USER));
+        }
+        if (IdentityEventConstants.Event.PRE_DELETE_USER_WITH_ID.equals(eventName) ||
+                IdentityEventConstants.Event.POST_DELETE_USER.equals(eventName)) {
+            return Boolean.TRUE.equals(threadLocalProperties.get(UserSharingEvent.PROCESS_DELETE_SHARED_USER));
+        }
+        return false;
+    }
+
     private boolean isSupportedEvent(String eventName) {
 
         Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
@@ -173,7 +257,8 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
                         IdentityEventConstants.Event.POST_ENABLE_ACCOUNT.equals(eventName) ||
                         IdentityEventConstants.Event.POST_ADD_USER.equals(eventName) ||
                         UserSharingEvent.POST_SHARE_USER.equals(eventName) ||
-                        UserSharingEvent.POST_UNSHARE_USER.equals(eventName));
+                        UserSharingEvent.POST_UNSHARE_USER.equals(eventName) ||
+                        IdentityEventConstants.Event.POST_UPDATE_USER_LIST_OF_ROLE_V2_EVENT.equals(eventName));
     }
 
     private boolean isUserCreatedFlow(String eventName) {
@@ -226,6 +311,8 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
             eventPayload = payloadBuilder.buildUserSharedEvent(eventData);
         } else if (UserSharingEvent.POST_UNSHARE_USER.equals(eventName)) {
             eventPayload = payloadBuilder.buildUserUnsharedEvent(eventData);
+        } else if (IdentityEventConstants.Event.POST_UPDATE_USER_LIST_OF_ROLE_V2_EVENT.equals(eventName)) {
+            eventPayload = payloadBuilder.buildUserRolesUpdatedEvent(eventData);
         } else {
             log.debug("Unsupported user operation event: " + eventName);
             return;

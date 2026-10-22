@@ -31,6 +31,7 @@ import org.wso2.carbon.consent.mgt.core.ConsentManager;
 import org.wso2.carbon.identity.application.authentication.framework.UserSessionManagementService;
 import org.wso2.carbon.identity.application.mgt.ApplicationManagementService;
 import org.wso2.carbon.identity.claim.metadata.mgt.ClaimMetadataManagementService;
+import org.wso2.carbon.identity.organization.management.organization.user.sharing.OrganizationUserSharingService;
 import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
 import org.wso2.carbon.identity.role.v2.mgt.core.RoleManagementService;
 import org.wso2.carbon.idp.mgt.IdpManager;
@@ -302,5 +303,35 @@ public class WSO2EventHookHandlerServiceComponent {
 
         log.debug("Unsetting the IdP Manager");
         WSO2EventHookHandlerDataHolder.getInstance().setIdpManager(null);
+    }
+
+    /**
+     * Set organization user sharing service implementation. Used to tell the payloads of a shared user's profile
+     * which user it belongs to.
+     *
+     * @param organizationUserSharingService OrganizationUserSharingService instance
+     */
+    @Reference(
+            name = "organization.user.sharing.service.component",
+            service = OrganizationUserSharingService.class,
+            cardinality = ReferenceCardinality.OPTIONAL,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unsetOrganizationUserSharingService")
+    protected void setOrganizationUserSharingService(OrganizationUserSharingService organizationUserSharingService) {
+
+        log.debug("Setting the Organization User Sharing Service");
+        WSO2EventHookHandlerDataHolder.getInstance().setOrganizationUserSharingService(organizationUserSharingService);
+    }
+
+    /**
+     * Unset organization user sharing service implementation.
+     *
+     * @param organizationUserSharingService OrganizationUserSharingService instance
+     */
+    protected void unsetOrganizationUserSharingService(
+            OrganizationUserSharingService organizationUserSharingService) {
+
+        log.debug("Unsetting the Organization User Sharing Service");
+        WSO2EventHookHandlerDataHolder.getInstance().setOrganizationUserSharingService(null);
     }
 }
