@@ -41,6 +41,30 @@ public interface UserOperationEventPayloadBuilder {
     EventPayload buildUserCreatedEvent(EventData eventData) throws IdentityEventException;
 
     /**
+     * Build the payload of a user shared with an organization.
+     *
+     * @param eventData Event data.
+     * @return Event payload, or null if the schema does not support the event.
+     * @throws IdentityEventException If the payload cannot be built.
+     */
+    default EventPayload buildUserSharedEvent(EventData eventData) throws IdentityEventException {
+
+        return null;
+    }
+
+    /**
+     * Build the payload of a user unshared from an organization.
+     *
+     * @param eventData Event data.
+     * @return Event payload, or null if the schema does not support the event.
+     * @throws IdentityEventException If the payload cannot be built.
+     */
+    default EventPayload buildUserUnsharedEvent(EventData eventData) throws IdentityEventException {
+
+        return null;
+    }
+
+    /**
      * Get the event schema type.
      *
      * @return Event schema type.

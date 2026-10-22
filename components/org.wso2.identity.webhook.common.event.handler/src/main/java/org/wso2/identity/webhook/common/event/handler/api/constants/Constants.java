@@ -57,6 +57,24 @@ public class Constants {
     /**
      * This class represents the identity event types.
      */
+    /**
+     * Identity events raised by organization user sharing, and the properties they carry.
+     */
+    public static class UserSharingEvent {
+
+        public static final String POST_SHARE_USER = "POST_SHARE_USER";
+        public static final String POST_UNSHARE_USER = "POST_UNSHARE_USER";
+        public static final String SHARED_USER_ID = "SHARED_USER_ID";
+        public static final String SHARED_ORGANIZATION_ID = "SHARED_ORGANIZATION_ID";
+        public static final String ASSOCIATED_USER_ID = "ASSOCIATED_USER_ID";
+        public static final String ASSOCIATED_ORGANIZATION_ID = "ASSOCIATED_ORGANIZATION_ID";
+        public static final String SHARED_TYPE = "SHARED_TYPE";
+
+        private UserSharingEvent() {
+
+        }
+    }
+
     public static class Event {
 
         public static final String LOGIN_SUCCESS_EVENT = "https://schemas.identity.wso2.org/events/login/event-type/loginSuccess";
@@ -65,6 +83,8 @@ public class Constants {
         public static final String POST_REGISTRATION_SUCCESS_EVENT = "https://schemas.identity.wso2.org/events/registration/event-type/registrationSuccess";
         public static final String POST_REGISTRATION_FAILED_EVENT = "https://schemas.identity.wso2.org/events/registration/event-type/registrationFailed";
         public static final String POST_USER_CREATED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userCreated";
+        public static final String POST_USER_SHARED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userShared";
+        public static final String POST_USER_UNSHARED_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userUnshared";
         public static final String POST_UPDATE_USER_LIST_OF_ROLE_EVENT = "https://schemas.identity.wso2.org/events/group/event-type/groupUpdated";
         public static final String POST_DELETE_USER_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userDeleted";
         public static final String POST_UNLOCK_ACCOUNT_EVENT = "https://schemas.identity.wso2.org/events/user/event-type/userAccountUnlocked";

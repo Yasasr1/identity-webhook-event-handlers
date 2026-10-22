@@ -37,6 +37,7 @@ import org.wso2.carbon.identity.event.publisher.api.model.SecurityEventTokenPayl
 import org.wso2.carbon.identity.webhook.metadata.api.model.Channel;
 import org.wso2.carbon.identity.webhook.metadata.api.model.EventProfile;
 import org.wso2.identity.webhook.common.event.handler.api.builder.UserOperationEventPayloadBuilder;
+import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserSharingEvent;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata;
 import org.wso2.identity.webhook.common.event.handler.internal.component.EventHookHandlerDataHolder;
@@ -170,7 +171,9 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
                         IdentityEventConstants.Event.POST_USER_PROFILE_UPDATE.equals(eventName) ||
                         IdentityEventConstants.Event.POST_DISABLE_ACCOUNT.equals(eventName) ||
                         IdentityEventConstants.Event.POST_ENABLE_ACCOUNT.equals(eventName) ||
-                        IdentityEventConstants.Event.POST_ADD_USER.equals(eventName));
+                        IdentityEventConstants.Event.POST_ADD_USER.equals(eventName) ||
+                        UserSharingEvent.POST_SHARE_USER.equals(eventName) ||
+                        UserSharingEvent.POST_UNSHARE_USER.equals(eventName));
     }
 
     private boolean isUserCreatedFlow(String eventName) {
@@ -219,11 +222,19 @@ public class UserOperationEventHookHandler extends AbstractEventHandler {
             eventPayload = payloadBuilder.buildUserAccountDisableEvent(eventData);
         } else if (isUserCreatedFlow(eventName)) {
             eventPayload = payloadBuilder.buildUserCreatedEvent(eventData);
+        } else if (UserSharingEvent.POST_SHARE_USER.equals(eventName)) {
+            eventPayload = payloadBuilder.buildUserSharedEvent(eventData);
+        } else if (UserSharingEvent.POST_UNSHARE_USER.equals(eventName)) {
+            eventPayload = payloadBuilder.buildUserUnsharedEvent(eventData);
         } else {
             log.debug("Unsupported user operation event: " + eventName);
             return;
         }
 
+        if (eventPayload == null) {
+            log.debug("No payload built for user operation event: " + eventName);
+            return;
+        }
         SecurityEventTokenPayload securityEventTokenPayload =
                 EventHookHandlerUtils.buildSecurityEventToken(eventPayload, eventUri);
         EventHookHandlerDataHolder.getInstance().getEventPublisherService()

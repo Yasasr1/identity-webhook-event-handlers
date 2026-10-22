@@ -22,6 +22,7 @@ import org.wso2.carbon.identity.core.context.IdentityContext;
 import org.wso2.carbon.identity.core.context.model.Flow;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.identity.webhook.common.event.handler.api.service.EventProfileManager;
+import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserSharingEvent;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventMetadata;
 
 import java.util.Objects;
@@ -45,6 +46,8 @@ import static org.wso2.identity.webhook.common.event.handler.api.constants.Const
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_UPDATE_USER_CREDENTIAL;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_UPDATE_USER_LIST_OF_ROLE_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_USER_CREATED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_USER_SHARED_EVENT;
+import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_USER_UNSHARED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.POST_USER_PROFILE_UPDATED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.CONSENT_ADDED_EVENT;
 import static org.wso2.identity.webhook.common.event.handler.api.constants.Constants.Event.CONSENT_REVOKED_EVENT;
@@ -139,6 +142,12 @@ public class WSO2EventProfileManager implements EventProfileManager {
                  */
                 channel = USER_OPERATION_CHANNEL;
                 event = POST_USER_CREATED_EVENT;
+            } else if (UserSharingEvent.POST_SHARE_USER.equals(eventName)) {
+                channel = USER_OPERATION_CHANNEL;
+                event = POST_USER_SHARED_EVENT;
+            } else if (UserSharingEvent.POST_UNSHARE_USER.equals(eventName)) {
+                channel = USER_OPERATION_CHANNEL;
+                event = POST_USER_UNSHARED_EVENT;
             } else if (IdentityEventConstants.Event.POST_ISSUE_ACCESS_TOKEN_V2.equals(eventName)) {
                 channel = TOKEN_CHANNEL;
                 event = TOKEN_ISSUED_EVENT;

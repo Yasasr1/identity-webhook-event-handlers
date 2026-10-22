@@ -18,25 +18,34 @@
 package org.wso2.identity.webhook.wso2.event.handler.api.builder;
 
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.core.context.IdentityContext;
 import org.wso2.carbon.identity.core.context.model.Flow;
+import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.IdentityEventConstants;
 import org.wso2.carbon.identity.event.IdentityEventException;
 import org.wso2.carbon.identity.event.publisher.api.model.EventPayload;
+import org.wso2.carbon.identity.organization.management.service.OrganizationManager;
+import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
 import org.wso2.carbon.user.api.UserStoreException;
 import org.wso2.carbon.user.api.UserStoreManager;
 import org.wso2.carbon.user.core.UserCoreConstants;
 import org.wso2.carbon.user.core.common.AbstractUserStoreManager;
 import org.wso2.identity.webhook.common.event.handler.api.builder.UserOperationEventPayloadBuilder;
 import org.wso2.identity.webhook.common.event.handler.api.constants.Constants;
+import org.wso2.identity.webhook.common.event.handler.api.constants.Constants.UserSharingEvent;
 import org.wso2.identity.webhook.common.event.handler.api.model.EventData;
+import org.wso2.identity.webhook.wso2.event.handler.internal.component.WSO2EventHookHandlerDataHolder;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserAccountEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserCreatedEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserGroupUpdateEventPayload;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.WSO2UserSharingEventPayload;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Group;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Organization;
+import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.TargetOrganization;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.Tenant;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.User;
 import org.wso2.identity.webhook.wso2.event.handler.internal.model.common.UserClaim;
@@ -50,12 +59,17 @@ import java.util.Optional;
 
 import static org.wso2.carbon.identity.event.IdentityEventConstants.EventProperty.USER_STORE_MANAGER;
 import static org.wso2.identity.webhook.common.event.handler.internal.constant.Constants.PRE_DELETE_USER_ID;
+import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants.ORGANIZATIONS_API_ENDPOINT;
 import static org.wso2.identity.webhook.wso2.event.handler.internal.constant.Constants.SCIM2_USERS_ENDPOINT;
 
 /**
  * WSO2 UserOperation Event Payload Builder.
  */
 public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventPayloadBuilder {
+
+    private static final Log LOG = LogFactory.getLog(WSO2UserOperationEventPayloadBuilder.class);
+    private static final String USER_SHARE_ACTION = "USER_SHARE";
+    private static final String USER_UNSHARE_ACTION = "USER_UNSHARE";
 
     @Override
     public EventPayload buildUserGroupUpdateEvent(EventData eventData) throws IdentityEventException {
@@ -456,6 +470,129 @@ public class WSO2UserOperationEventPayloadBuilder implements UserOperationEventP
         } catch (UserStoreException e) {
             throw new IdentityEventException(
                     "Error while extracting user claims for the user : " + domainQualifiedUserName, e);
+        }
+    }
+
+    @Override
+    public EventPayload buildUserSharedEvent(EventData eventData) throws IdentityEventException {
+
+        return buildUserSharingEvent(eventData, USER_SHARE_ACTION);
+    }
+
+    @Override
+    public EventPayload buildUserUnsharedEvent(EventData eventData) throws IdentityEventException {
+
+        return buildUserSharingEvent(eventData, USER_UNSHARE_ACTION);
+    }
+
+    /**
+     * Build the payload of a user shared with, or unshared from, an organization. The event is raised in the
+     * organization that performed the operation, which may differ from both the organization the user resides in
+     * and the organization the user was shared with, so each of them is resolved from the event properties rather
+     * than from the thread. Sharing runs asynchronously, where the identity context of the request is not available.
+     */
+    private EventPayload buildUserSharingEvent(EventData eventData, String action) {
+
+        Map<String, Object> properties = eventData.getEventParams();
+        String initiatingTenantDomain = eventData.getTenantDomain();
+        String residentOrgId = getStringProperty(properties, UserSharingEvent.ASSOCIATED_ORGANIZATION_ID);
+        String targetOrgId = getStringProperty(properties, UserSharingEvent.SHARED_ORGANIZATION_ID);
+        String residentTenantDomain = resolveTenantDomainOfOrganization(residentOrgId);
+        String targetTenantDomain = resolveTenantDomainOfOrganization(targetOrgId);
+
+        User user = new User();
+        String userId = getStringProperty(properties, UserSharingEvent.ASSOCIATED_USER_ID);
+        user.setId(userId);
+        String userName = getStringProperty(properties, IdentityEventConstants.EventProperty.USER_NAME);
+        if (userName != null) {
+            List<UserClaim> claims = new ArrayList<>();
+            WSO2PayloadUtils.generateUserClaim(FrameworkConstants.USERNAME_CLAIM, userName, residentTenantDomain)
+                    .ifPresent(claims::add);
+            user.setClaims(claims);
+        }
+        user.setOrganization(WSO2PayloadUtils.buildOrganizationFromOrgId(residentOrgId, residentTenantDomain));
+        user.setRef(buildUserRef(residentTenantDomain, userId));
+
+        User sharedUser = new User();
+        String sharedUserId = getStringProperty(properties, UserSharingEvent.SHARED_USER_ID);
+        sharedUser.setId(sharedUserId);
+        sharedUser.setRef(buildUserRef(targetTenantDomain, sharedUserId));
+
+        Organization targetOrganization =
+                WSO2PayloadUtils.buildOrganizationFromOrgId(targetOrgId, targetTenantDomain);
+        TargetOrganization.Builder targetOrganizationBuilder = new TargetOrganization.Builder().id(targetOrgId);
+        if (targetOrganization != null) {
+            targetOrganizationBuilder.name(targetOrganization.getName())
+                    .orgHandle(targetOrganization.getOrgHandle())
+                    .depth(targetOrganization.getDepth());
+        }
+        if (targetOrgId != null && initiatingTenantDomain != null) {
+            targetOrganizationBuilder.ref(WSO2PayloadUtils.constructFullURLWithEndpoint(ORGANIZATIONS_API_ENDPOINT,
+                    initiatingTenantDomain) + "/" + targetOrgId);
+        }
+
+        Flow flow = IdentityContext.getThreadLocalIdentityContext().getCurrentFlow();
+        return new WSO2UserSharingEventPayload.Builder()
+                .initiatorType(WSO2PayloadUtils.getFlowInitiatorType(flow))
+                .initiatorIpAddress(WSO2PayloadUtils.resolveInitiatorIpAddress())
+                .action(action)
+                .tenant(resolveRootTenant(initiatingTenantDomain))
+                .organization(WSO2PayloadUtils.buildOrganizationFromTenantDomain(initiatingTenantDomain))
+                .user(user)
+                .targetOrganization(targetOrganizationBuilder.build())
+                .sharedUser(sharedUser)
+                .sharedType(getStringProperty(properties, UserSharingEvent.SHARED_TYPE))
+                .build();
+    }
+
+    private String getStringProperty(Map<String, Object> properties, String key) {
+
+        Object value = properties != null ? properties.get(key) : null;
+        return value != null ? String.valueOf(value) : null;
+    }
+
+    private String resolveTenantDomainOfOrganization(String organizationId) {
+
+        if (organizationId == null) {
+            return null;
+        }
+        try {
+            return WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager()
+                    .resolveTenantDomain(organizationId);
+        } catch (OrganizationManagementException e) {
+            LOG.debug("Error while resolving the tenant of organization: " + organizationId, e);
+            return null;
+        }
+    }
+
+    private String buildUserRef(String tenantDomain, String userId) {
+
+        if (tenantDomain == null || userId == null) {
+            return null;
+        }
+        return WSO2PayloadUtils.constructFullURLWithEndpoint(SCIM2_USERS_ENDPOINT, tenantDomain) + "/" + userId;
+    }
+
+    /**
+     * Resolve the root tenant of the organization the event was raised in. The identity context carries it for a
+     * request, but not for the asynchronous sharing flow.
+     */
+    private Tenant resolveRootTenant(String tenantDomain) {
+
+        Tenant tenant = WSO2PayloadUtils.buildTenant();
+        if (tenant != null || tenantDomain == null) {
+            return tenant;
+        }
+        try {
+            OrganizationManager organizationManager =
+                    WSO2EventHookHandlerDataHolder.getInstance().getOrganizationManager();
+            String organizationId = organizationManager.resolveOrganizationId(tenantDomain);
+            String rootTenantDomain = organizationManager.resolveTenantDomain(
+                    organizationManager.getPrimaryOrganizationId(organizationId));
+            return new Tenant(String.valueOf(IdentityTenantUtil.getTenantId(rootTenantDomain)), rootTenantDomain);
+        } catch (OrganizationManagementException e) {
+            LOG.debug("Error while resolving the root tenant of: " + tenantDomain, e);
+            return null;
         }
     }
 
